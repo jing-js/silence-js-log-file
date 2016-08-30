@@ -139,7 +139,7 @@ class FileLogger {
     this._write(level, ...args);
   }
   _format(level, ...args) {
-    let prefix = `${TIPS[level]} [${formatDate()}] `;
+    let prefix = `[${formatDate()}] ${TIPS[level]} `;
     if (args.length === 1) {
       return prefix + (typeof args[0] === 'object' ? JSON.stringify(args[0]) : args[0].toString()) + '\n';
     } else {
@@ -161,11 +161,11 @@ class FileLogger {
   warn(...args) {
     this._log(LEVELS.WARN, ...args);
   }
-  access(method, code, duration, url) {
+  access(method, code, duration, ip, url) {
     if (this.level === LEVELS.NONE) {
       return;
     }
-    this.accessWriter.write(`[${formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${duration}ms] ${url}\n`);
+    this.accessWriter.write(`[${formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${duration}ms] [${ip}] ${url}\n`);
   }
   _write(level, ...args) {
     if (args.length === 0) {
