@@ -1,0 +1,22 @@
+{
+  "name": "silence-js-log-file",
+  "version": "1.0.0",
+  "description": "file logger for silence-js",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Yuhang GE <abeyuhang@gmail.com>",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jing-js/silence-js-log-file.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jing-js/silence-js-log-file/issues"
+  },
+  "homepage": "https://github.com/jing-js/silence-js-log-file#readme",
+  "dependencies": {
+    "silence-js-util": "^1.0.0"
+  }
+}
