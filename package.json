@@ -1,6 +1,6 @@
 {
   "name": "silence-js-log-file",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "file logger for silence-js",
   "main": "index.js",
   "scripts": {
