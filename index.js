@@ -106,10 +106,13 @@ class Writer {
 
 class FileLogger {
   constructor(config) {
-    this.level = LEVELS[(config.level || 'ERROR').toUpperCase()];
+    this._level = LEVELS[(config.level || 'ERROR').toUpperCase()];
     this.path = path.resolve(process.cwd(), config.path || './data/logs');
     this.writers = new Map();
     this.commonWriters = new Array(LEVEL_NAMES.length);
+  }
+  get level() {
+    return LEVEL_NAMES[this._level];
   }
   init() {
     LEVEL_NAMES.forEach((level, idx) => {
@@ -133,7 +136,7 @@ class FileLogger {
     });
   }
   _log(level, section, ...args) {
-    if (level < this.level) {
+    if (level < this._level) {
       return;
     }
     this._write(level, section.toLowerCase(), ...args);
@@ -170,15 +173,15 @@ class FileLogger {
   swarn(section, ...args) {
     this._log(LEVELS.WARN, section, ...args);
   }
-  access(method, code, duration, bytesRead, bytesWritten, user, ip, userAgent, url) {
-    if (this.level === LEVELS.NONE) {
+  access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url) {
+    if (this._level === LEVELS.NONE) {
       return;
     }
     let ds = duration < 2000 ? duration + 'ms' : (duration / 1000 | 0) + 's';
     if (userAgent && userAgent.indexOf('"') >= 0) {
       userAgent = userAgent.replace(/\"/g, '\\"')
     }
-    this.commonWriters[LEVELS.ACCESS].write((cluster.isWorker ? `[${cluster.worker.id}] ` : '') + `[${util.formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${ds}] [${bytesRead}] [${bytesWritten}] [${user ? user : '-'}] [${ip}] "${userAgent || ''}" ${url}\n`);
+    this.commonWriters[LEVELS.ACCESS].write((cluster.isWorker ? `[${cluster.worker.id}] ` : '') + `[${util.formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${ds}] [${bytesRead}] [${bytesWritten}] [${user ? user : '-'}] [${clientIp || '-'}] [${remoteIp || '-'}] "${userAgent || '-'}" ${url}\n`);
   }
   _write(level, section, ...args) {
     if (args.length === 0) {
