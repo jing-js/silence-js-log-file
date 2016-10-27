@@ -19,7 +19,7 @@ const LEVEL_NAMES = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'ACCESS', 'NONE'];
 const MAX_CACHE_LENGTH = 100000; // 10万条可缓存在内存中, 当磁盘 IO 跟不上时。
 
 function _err(err) {
-  console.log(err);
+  console.log(err.stack || err.message || err.toString());
 }
 
 class Writer {
@@ -107,6 +107,7 @@ class Writer {
 class FileLogger {
   constructor(config) {
     this._level = LEVELS[(config.level || 'ERROR').toUpperCase()];
+    this._cluster = config.cluster ? `[${config.cluster.toUpperCase()}]` : '';
     this.path = path.resolve(process.cwd(), config.path || './data/logs');
     this.writers = new Map();
     this.commonWriters = new Array(LEVEL_NAMES.length);
@@ -129,11 +130,20 @@ class FileLogger {
     return util.mkdirP(this.path);
   }
   close() {
-    this.writers.values.forEach(ws => {
-      ws.values.forEach(writer => {
-        writer.close();
-      });
+    LEVEL_NAMES.forEach((level, idx) => {
+      let ws = this.writers.get(level);
+      if (!ws) {
+        return;
+      }
+      let it = ws.values();
+      let n = it.next();
+      while(!n.done && n.value) {
+        n.value.close();
+        n = it.next();
+      }
+      ws.clear();
     });
+    this.writers.clear();
   }
   _log(level, section, ...args) {
     if (level < this._level) {
@@ -142,7 +152,7 @@ class FileLogger {
     this._write(level, section.toLowerCase(), ...args);
   }
   _format(level, ...args) {
-    let prefix = (cluster.isWorker ? `[${cluster.worker.id}] ` : '') + `[${util.formatDate()}] `;
+    let prefix = this._cluster + `[${util.formatDate()}] `;
     if (args.length === 1) {
       return prefix + (typeof args[0] === 'object' ? JSON.stringify(args[0]) : args[0].toString()) + '\n';
     } else {
@@ -181,7 +191,7 @@ class FileLogger {
     if (userAgent && userAgent.indexOf('"') >= 0) {
       userAgent = userAgent.replace(/\"/g, '\\"')
     }
-    this.commonWriters[LEVELS.ACCESS].write((cluster.isWorker ? `[${cluster.worker.id}] ` : '') + `[${util.formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${ds}] [${bytesRead}] [${bytesWritten}] [${user ? user : '-'}] [${clientIp || '-'}] [${remoteIp || '-'}] "${userAgent || '-'}" ${url}\n`);
+    this.commonWriters[LEVELS.ACCESS].write(this._cluster + `[${util.formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${ds}] [${bytesRead}] [${bytesWritten}] [${user ? user : '-'}] [${clientIp || '-'}] [${remoteIp || '-'}] "${userAgent || '-'}" ${url}\n`);
   }
   _write(level, section, ...args) {
     if (args.length === 0) {
