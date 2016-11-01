@@ -8,15 +8,16 @@ const cluster = require('cluster');
 const PAD_2_NUMS = util.formatDate.PAD_2_NUMS;
 
 const LEVELS = {
-  NONE: 5,
-  ACCESS: 4,
-  ERROR: 3,
-  WARN: 2,
-  INFO: 1,
-  DEBUG: 0
+  NONE: 6,
+  ACCESS: 5,
+  ERROR: 4,
+  WARN: 3,
+  INFO: 2,
+  DEBUG: 1,
+  TRACE: 0
 };
-const LEVEL_NAMES = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'ACCESS', 'NONE'];
-const MAX_CACHE_LENGTH = 100000; // 10万条可缓存在内存中, 当磁盘 IO 跟不上时。
+const LEVEL_NAMES = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR', 'ACCESS', 'NONE'];
+const MAX_CACHE_LENGTH = 10000; // 1万条可缓存在内存中, 当磁盘 IO 跟不上时。
 
 function _err(err) {
   console.log(err.stack || err.message || err.toString());
@@ -36,12 +37,17 @@ class Writer {
     this._continueHandler = this._continue.bind(this);
     this._errorHandler = this._error.bind(this);
     this.stream = null;
+    this.MAX_CACHE_LENGTH = cfg.maxCache || MAX_CACHE_LENGTH;
   }
   _putCache(msg) {
-    this.cache.push(msg);
-    if (this.cache.length > MAX_CACHE_LENGTH) {
-      _err(`FileLogger(level:${this.level}, section:${this.section}) cache received MAX_CACHE_LENGTH ${MAX_CACHE_LENGTH}`);
-      _err(this.cache.shift());
+    if (this.cache.length > this.MAX_CACHE_LENGTH / 2 | 0) {
+      _err(this.cache.length);
+    }
+    if (this.cache.length > this.MAX_CACHE_LENGTH) {
+      _err(`FileLogger(level:${this.level}, section:${this.section}) cache received MAX_CACHE_LENGTH ${this.MAX_CACHE_LENGTH}`);
+      _err(msg);
+    } else {
+      this.cache.push(msg);
     }
   }
 
@@ -111,18 +117,27 @@ class FileLogger {
     this.path = path.resolve(process.cwd(), config.path || './data/logs');
     this.writers = new Map();
     this.commonWriters = new Array(LEVEL_NAMES.length);
+    this._maxCache = config.maxCache || MAX_CACHE_LENGTH;
+    this._maxAccessCache = config.maxAccessCache || this._maxCache;
+    this._state = -1;  // -1: not init, 0: init and ready, 1: closed
+    this.WriterClass = config.WriterClass || Writer;
   }
   get level() {
     return LEVEL_NAMES[this._level];
   }
   init() {
+    if (this._state >= 0) {
+      return Promise.resolve();
+    }
+    this._state = 0;
     LEVEL_NAMES.forEach((level, idx) => {
       let ws = new Map();
       this.writers.set(level, ws);
-      let writer = new Writer({
+      let writer = new this.WriterClass({
         level,
         section: 'ALL',
-        path: this.path
+        path: this.path,
+        maxCache: level === 'ACCESS' ? this._maxAccessCache : this._maxCache
       });
       ws.set('ALL', writer);
       this.commonWriters[idx] = writer;
@@ -130,6 +145,10 @@ class FileLogger {
     return util.mkdirP(this.path);
   }
   close() {
+    if (this._state > 0) {
+      return;
+    }
+    this._state = 1;
     LEVEL_NAMES.forEach((level, idx) => {
       let ws = this.writers.get(level);
       if (!ws) {
@@ -145,46 +164,74 @@ class FileLogger {
     });
     this.writers.clear();
   }
-  _log(level, section, ...args) {
-    if (level < this._level) {
-      return;
-    }
-    this._write(level, section.toLowerCase(), ...args);
-  }
   _format(level, ...args) {
     let prefix = this._cluster + `[${util.formatDate()}] `;
-    if (args.length === 1) {
-      return prefix + (typeof args[0] === 'object' ? JSON.stringify(args[0]) : args[0].toString()) + '\n';
-    } else {
-      return prefix + format(...args) + '\n';
-    }
+    return prefix + format(...args) + '\n'
   }
   debug(...args) {
-    this._log(LEVELS.DEBUG, 'ALL', ...args);
+    if (LEVELS.DEBUG < this._level) {
+      return;
+    }
+    this._write(LEVELS.DEBUG, 'ALL', ...args);
   }
   error(...args) {
-    this._log(LEVELS.ERROR, 'ALL', ...args);
+    if (LEVELS.ERROR < this._level) {
+      return;
+    }
+    if (args.length === 1 && typeof args[0] === 'string') {
+      this._write(LEVELS.ERROR, 'ALL', new Error(args[0]));
+    } else {
+      this._write(LEVELS.ERROR, 'ALL', ...args);
+    }
   }
   info(...args) {
-    this._log(LEVELS.INFO, 'ALL', ...args);
+    if (LEVELS.INFO < this._level) {
+      return;
+    }
+    this._write(LEVELS.INFO, 'ALL', ...args);
   }
   warn(...args) {
-    this._log(LEVELS.WARN, 'ALL', ...args);
+    if (LEVELS.WARN < this._level) {
+      return;
+    }
+    this._write(LEVELS.WARN, 'ALL', ...args);
+  }
+  trace(...args) {
+    if (LEVELS.TRACE < this._level) {
+      return;
+    }
+    this._write(LEVELS.TRACE, 'ALL', ...args);
   }
   sdebug(section, ...args) {
-    this._log(LEVELS.DEBUG, section, ...args);
+    if (LEVELS.DEBUG < this._level) {
+      return;
+    }
+    this._write(LEVELS.DEBUG, section, ...args);
   }
   serror(section, ...args) {
-    this._log(LEVELS.ERROR, section, ...args);
+    if (LEVELS.ERROR < this._level) {
+      return;
+    }
+    if (args.length === 1 && typeof args[0] === 'string') {
+      this._write(LEVELS.ERROR, section, new Error(args[0]));
+    } else {
+      this._write(LEVELS.ERROR, section, ...args);
+    }
   }
   sinfo(section, ...args) {
-    this._log(LEVELS.INFO, section, ...args);
+    if (LEVELS.INFO < this._level) {
+      return;
+    }
+    this._write(LEVELS.INFO, section, ...args);
   }
   swarn(section, ...args) {
-    this._log(LEVELS.WARN, section, ...args);
+    if (LEVELS.WARN < this._level) {
+      return;
+    }
+    this._write(LEVELS.WARN, section, ...args);
   }
   access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url) {
-    if (this._level === LEVELS.NONE) {
+    if (LEVELS.ACCESS < this._level || this._state !== 0) {
       return;
     }
     let ds = duration < 2000 ? duration + 'ms' : (duration / 1000 | 0) + 's';
@@ -194,7 +241,7 @@ class FileLogger {
     this.commonWriters[LEVELS.ACCESS].write(this._cluster + `[${util.formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${ds}] [${bytesRead}] [${bytesWritten}] [${user ? user : '-'}] [${clientIp || '-'}] [${remoteIp || '-'}] "${userAgent || '-'}" ${url}\n`);
   }
   _write(level, section, ...args) {
-    if (args.length === 0) {
+    if (args.length === 0 || this._state !== 0) {
       return;
     }
     let writer;
@@ -203,10 +250,11 @@ class FileLogger {
     } else {
       let ws = this.writers.get(LEVEL_NAMES[level]);
       if (!ws.has(section)) {
-        ws.set(section, new Writer({
+        ws.set(section, new this.WriterClass({
           level: LEVEL_NAMES[level],
           section: section,
-          path: this.path
+          path: this.path,
+          maxCache: this._maxCache
         }));
       }
       writer = ws.get(section);
@@ -215,5 +263,9 @@ class FileLogger {
     writer.write(msg);
   }
 }
+
+FileLogger.LEVELS = LEVELS;
+FileLogger.LEVEL_NAMES = LEVEL_NAMES;
+FileLogger.Writer = Writer;
 
 module.exports = FileLogger;
