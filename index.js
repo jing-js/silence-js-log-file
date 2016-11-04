@@ -55,16 +55,16 @@ class Writer {
       return;
     }
     let d = new Date();
-    if (this.y !== d.getFullYear() || this.m !== d.getMonth() || this.d !== d.getDate() || !this.stream) {
+    if (this.y !== d.getUTCFullYear() || this.m !== d.getUTCMonth() || this.d !== d.getUTCDate() || !this.stream) {
       if (this.stream) {
         this.stream.removeListener('error', this._errorHandler);
         this.stream.removeListener('drain', this._continueHandler);
         this.stream.end(); // just close previous stream
         this.stream = null;
       }
-      this.y = d.getFullYear();
-      this.m = d.getMonth();
-      this.d = d.getDate();
+      this.y = d.getUTCFullYear();
+      this.m = d.getUTCMonth();
+      this.d = d.getUTCDate();
       let file = path.join(
         this.path,
         `${this.y}-${PAD_2_NUMS[this.m + 1]}-${PAD_2_NUMS[this.d]}${this.postfix}.log`
@@ -95,16 +95,22 @@ class Writer {
   _error(err, level) {
     _err(err);
     if (this.stream) {
-      this.stream.removeAllListener('error', this._errorHandler);
-      this.stream.removeAllListener('drain', this._continueHandler);
+      this.stream.removeListener('error', this._errorHandler);
+      this.stream.removeListener('drain', this._continueHandler);
     }
     this.stream = null;
   }
   close() {
-    if (this.stream) {
-      this.stream.close();
-      this.stream = null;
-    }
+    return new Promise((resolve, reject) => {
+      if (this.stream) {
+        this.stream.on('finish', resolve);
+        this.stream.on('error', reject);
+        this.stream.end();
+        this.stream = null;
+      } else {
+        resolve();
+      }
+    });
   }
 }
 
@@ -113,7 +119,7 @@ class FileLogger {
     this._level = LEVELS[(config.level || 'ERROR').toUpperCase()];
     this._cluster = config.cluster > -2 ? `[${config.cluster === -1 ? 'MASTER' : 'W_' + config.cluster}] ` : '';
     this.path = path.resolve(process.cwd(), config.path || './data/logs');
-    this._swriters = new Map();
+    this._swriters = new Array(LEVEL_NAMES.length);
     this._writers = new Array(LEVEL_NAMES.length);
     this._accessWriter = null;
     this._maxCache = config.maxCache || MAX_CACHE_LENGTH;
@@ -151,7 +157,7 @@ class FileLogger {
         return;
       }
       let ws = new Map();
-      this._swriters.set(level, ws);
+      this._swriters[idx] = ws;
       let writer = this._createWriter(level);
       this._writers[idx] = writer;
     });
@@ -164,25 +170,22 @@ class FileLogger {
       return;
     }
     this._state = 1;
-    LEVEL_NAMES.forEach((level, idx) => {
-      if (level === 'NONE') {
-        return;
-      }
-      this._writers[idx] && this._writers[idx].close();
-      let ws = this._swriters.get(level);
-      if (!ws) {
-        return;
-      }
+    let arr = [];
+    this._swriters.forEach(ws => {
       let it = ws.values();
       let n = it.next();
       while(!n.done && n.value) {
-        n.value.close();
+        arr.push(n.value.close());
         n = it.next();
       }
       ws.clear();
     });
+    this._writers.forEach(writer => {
+      arr.push(writer.close());
+    });
     this._writers.length = 0;
-    this._swriters.clear();
+    this._swriters.length = 0;
+    return Promise.all(arr);
   }
   _format(level, args) {
     let prefix = this._cluster + `[${util.formatDate()}] `;
@@ -271,7 +274,7 @@ class FileLogger {
     }
     let msg = this._format(level, args);
     if (this._state === 0) {
-      let ws = this._swriters.get(LEVEL_NAMES[level]);
+      let ws = this._swriters[level];
       let writer = ws.get(section);
       if (!writer) {
         writer = this._createWriter(LEVEL_NAMES[level], section);
