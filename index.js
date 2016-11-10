@@ -1,6 +1,5 @@
 'use strict';
 
-const format = require('util').format;
 const util = require('silence-js-util');
 const fs = require('fs');
 const path = require('path');
@@ -37,9 +36,10 @@ class Writer {
     this.stream = null;
     this.fl = cfg.fl; // fallbackLogger
     this.MAX_CACHE_LENGTH = cfg.maxCache;
+    this._cleanup = false;
+    this._exitResolve = null;
   }
   _putCache(msg) {
-    // console.log(this.level, this.cache.length, this.MAX_CACHE_LENGTH)
     if (this.cache.length >= this.MAX_CACHE_LENGTH) {
       if (this.fl !== null) {
         this.fl.serror('file-logger', this.level, this.section, 'cache received MAX_CACHE_LENGTH', this.MAX_CACHE_LENGTH);
@@ -58,12 +58,16 @@ class Writer {
   }
 
   write(msg) {
+    if (this._cleanup) {
+      return; // already closed
+    }
     msg = msg.replace(/\n/g, '\\n') + '\n';
 
     if (this.state === 1) {
       this._putCache(msg);
       return;
     }
+
     let d = new Date();
     if (this.y !== d.getUTCFullYear() || this.m !== d.getUTCMonth() || this.d !== d.getUTCDate() || !this.stream) {
       if (this.stream) {
@@ -91,18 +95,23 @@ class Writer {
     }
   }
   _continue() {
-    if (this.state !== 1) {
-      return;
-    }
     while(this.cache.length > 0) {
-      let msg = this.cache.shift();
+      let msg = this.cache.splice(0, 256).join('');
       if (!this.stream.write(msg)) {
         break;
       }
     }
     this.state = this.cache.length > 0 ? 1 : 0;
+    if (this.state === 0 && this._cleanup && this._exitResolve) {
+      this._closeStream(this._exitResolve);
+      this._exitResolve = null;
+    }
   }
   _error(err, level) {
+    if (this._cleanup && this._exitResolve) {
+      this._exitResolve();
+      this._exitResolve = null;
+    }
     _err(err);
     if (this.stream) {
       this.stream.removeListener('error', this._errorHandler);
@@ -110,12 +119,39 @@ class Writer {
     }
     this.stream = null;
   }
+  _closeStream(exitResolve) {
+    var stream = this.stream;
+    var _ended = false;
+    function onEnd(err) {
+      if (_ended) {
+        return;
+      }
+      _ended = true;
+      exitResolve();
+      stream.removeListener('finish', onEnd);
+      stream.removeListener('error', onEnd);
+      if (this.fl !== null) {
+        this.fl.serror('file-logger', err);
+      } else {
+        console.log(err);
+      }
+    }
+    stream.removeListener('error', this._errorHandler);
+    stream.removeListener('drain', this._continueHandler);
+    stream.on('finish', onEnd);
+    stream.on('error', onEnd);
+    stream.end();
+  }
   close() {
-    return new Promise((resolve, reject) => {
-      if (this.stream) {
-        this.stream.on('finish', resolve);
-        this.stream.on('error', reject);
-        this.stream.end();
+    if (this._cleanup) {
+      return Promise.resolve();
+    }
+    this._cleanup = true;
+    return new Promise(resolve => {
+      if (this.cache.length > 0) {
+        this._exitResolve = resolve;
+      } else if (this.stream) {
+        this._closeStream(resolve);
         this.stream = null;
       } else {
         resolve();
@@ -160,7 +196,6 @@ class FileLogger {
   }
 
   _init() {
-    this._state = 0;
     LEVEL_NAMES.forEach((level, idx) => {
       if (level === 'NONE') {
         return;
@@ -171,7 +206,14 @@ class FileLogger {
       this._writers[idx] = writer;
     });
     this._accessWriter = this._writers[LEVELS.ACCESS];
-    return this.path ? util.mkdirP(this.path) : Promise.resolve();
+    if (!this.path) {
+      this._state = 0;
+      return Promise.resolve();
+    } else {
+      return util.mkdirP(this.path).then(() => {
+        this._state = 0;
+      });
+    }
   }
   init() {
     if (this._state >= 0) {
@@ -210,9 +252,9 @@ class FileLogger {
 
     return Promise.all(arr);
   }
-  _format(level, args) {
-    let prefix = this._cluster + `[${util.formatDate()}] `;
-    return prefix + format(...args);
+  _format(level, args, ts) {
+    let prefix = this._cluster + `[${util.formatDate(ts ? new Date(ts) : undefined)}] `;
+    return prefix + (level === LEVELS.ERROR ? util.formatError(args) : util.formatArray(args));
   }
   debug(...args) {
     if (LEVELS.DEBUG < this._level || this._state > 0) {
@@ -220,15 +262,11 @@ class FileLogger {
     }
     this._write(LEVELS.DEBUG, args);
   }
-  error(...args) {
+  error(err) {
     if (LEVELS.ERROR < this._level || this._state > 0) {
       return;
     }
-    if (args.length === 1 && typeof args[0] === 'string') {
-      this._write(LEVELS.ERROR, [new Error(args[0])]);
-    } else {
-      this._write(LEVELS.ERROR, args);
-    }
+    this._write(LEVELS.ERROR, err);
   }
   info(...args) {
     if (LEVELS.INFO < this._level || this._state > 0) {
@@ -248,15 +286,11 @@ class FileLogger {
     }
     this._swrite(LEVELS.DEBUG, section, args);
   }
-  serror(section, ...args) {
+  serror(section, err) {
     if (LEVELS.ERROR < this._level || this._state > 0) {
       return;
     }
-    if (args.length === 1 && typeof args[0] === 'string') {
-      this._swrite(LEVELS.ERROR, section, [new Error(args[0])]);
-    } else {
-      this._swrite(LEVELS.ERROR, section, args);
-    }
+    this._swrite(LEVELS.ERROR, section, err);
   }
   sinfo(section, ...args) {
     if (LEVELS.INFO < this._level || this._state > 0) {
@@ -283,20 +317,18 @@ class FileLogger {
     } else if (this.fl !== null) {
       this.fl.access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
     } else {
-      console.log.apply(console, arguments);
+      // ignore
+      // console.log(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
     }
   }
-  _write(level, args) {
-    if (args.length === 0) {
-      return;
-    }
+  _write(level, args, ts) {
     if (this._state === 0 && this._writers[level].isAvaliable) {
-      let msg = this._format(level, args);
+      let msg = this._format(level, args, ts);
       this._writers[level].write(msg);
     } else if (this.fl !== null) {
-      this.fl._write(level, args);
+      this.fl._write(level, args, ts);
     } else {
-      console.log(...args);
+      console.log(args);
     }
   }
   _getWriter(level, section) {
@@ -308,17 +340,14 @@ class FileLogger {
     }
     return writer;
   }
-  _swrite(level, section, args) {
-    if (args.length === 0) {
-      return;
-    }
+  _swrite(level, section, args, ts) {
     let wr;
     if (this._state === 0 && (wr = this._getWriter(level, section)).isAvaliable) {
-      wr.write(this._format(level, args));
+      wr.write(this._format(level, args, ts));
     } else if (this.fl !== null) {
-      this.fl._swrite(level, section, args);
+      this.fl._swrite(level, section, args, ts);
     } else {
-      console.log(...args);
+      console.log(args);
     }
   }
 }
