@@ -38,6 +38,7 @@ class Writer {
     this._cleanup = false;
     this._exitResolve = null;
     this._errorCount = 0;
+    this._lastErrorTime = null;
     this._flCount = 0;
     this._wlCount = 0;
   }
@@ -45,6 +46,7 @@ class Writer {
     return {
       level: this.level,
       errorCount: this._errorCount,
+      lastErrorTime: this._lastErrorTime,
       cacheSize: this.cache.length,
       fallbackCount: this._flCount,
       logCount: this._wlCount
@@ -108,7 +110,8 @@ class Writer {
   }
   _error(err, level) {
     this._errorCount++;
-
+    this._lastErrorTime = new Date();
+    
     if (this._cleanup && this._exitResolve) {
       this._exitResolve();
       this._exitResolve = null;
