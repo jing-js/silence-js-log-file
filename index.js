@@ -330,18 +330,26 @@ class FileLogger {
     if (LEVELS.ACCESS < this._level || this._state > 0) {
       return;
     }
-    if (this._state === 0 && this._accessWriter.isAvaliable) {
+    if (this._state !== 0) {
+      if (this.fl !== null) {
+        this.fl.access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
+      } else {
+        console.log(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
+      }
+      return;
+    }
+
+    if (this._accessWriter.isAvaliable) {
       let ds = duration < 2000 ? duration + 'ms' : (duration / 1000 | 0) + 's';
       if (userAgent && userAgent.indexOf('"') >= 0) {
         userAgent = userAgent.replace(/\"/g, '\\"')
       }
       this._accessWriter.write(this._cluster + `[${util.formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${ds}] [${bytesRead}] [${bytesWritten}] [${user ? user : '-'}] [${clientIp || '-'}] [${remoteIp || '-'}] "${userAgent || '-'}" ${url}`);
     } else if (this.fl !== null) {
+      this._accessWriter._flCount++;
       this.fl.access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
     } else {
-      this._ulCount++;
-      // ignore
-      // console.log(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
+      console.log(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
     }
   }
   _write(level, args, ts) {
