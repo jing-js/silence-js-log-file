@@ -7,14 +7,15 @@ const cluster = require('cluster');
 const PAD_2_NUMS = util.formatDate.PAD_2_NUMS;
 
 const LEVELS = {
-  NONE: 5,
+  NONE: 6,
+  ACTION: 5,
   ACCESS: 4,
   ERROR: 3,
   WARN: 2,
   INFO: 1,
   DEBUG: 0,
 };
-const LEVEL_NAMES = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'ACCESS', 'NONE'];
+const LEVEL_NAMES = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'ACCESS', 'ACTION', 'NONE'];
 
 function _err(err) {
   console.log(err);
@@ -172,6 +173,7 @@ class FileLogger {
     this._swriters = new Array(LEVEL_NAMES.length);
     this._writers = new Array(LEVEL_NAMES.length);
     this._accessWriter = null;
+    this._actionWriter = null;
     this._maxCache = config.maxCache || MAX_CACHE_LENGTH;
     this._maxAccessCache = config.maxAccessCache || this._maxCache;
     this._state = -1;  // -1: not init, 0: init and ready, 1: closed,
@@ -228,6 +230,7 @@ class FileLogger {
       this._writers[idx] = writer;
     });
     this._accessWriter = this._writers[LEVELS.ACCESS];
+    this._actionWriter = this._writers[LEVELS.ACTION];
     if (!this.path) {
       this._state = 0;
       return Promise.resolve();
@@ -274,9 +277,11 @@ class FileLogger {
 
     return Promise.all(arr);
   }
+  _prefix(ts) {
+    return this._cluster + `[${util.formatDate(ts ? new Date(ts) : undefined)}] `;
+  }
   _format(level, args, ts) {
-    let prefix = this._cluster + `[${util.formatDate(ts ? new Date(ts) : undefined)}] `;
-    return prefix + (level === LEVELS.ERROR ? util.formatError(args) : util.formatArray(args));
+    return this._prefix(ts) + (level === LEVELS.ERROR ? util.formatError(args) : util.formatArray(args));
   }
   debug(...args) {
     if (LEVELS.DEBUG < this._level || this._state > 0) {
@@ -301,6 +306,28 @@ class FileLogger {
       return;
     }
     this._write(LEVELS.WARN, args);
+  }
+  action(userId, act, params) {
+    if (LEVELS.ACTION < this._level || !userId || !act) {
+      return;
+    }
+    if (this._state !== 0) {
+      if (this.fl !== null) {
+        this.fl.action(userId, act, params);
+      } else {
+        console.log(userId, act, params);
+      }
+      return;
+    }
+    if (this._actionWriter.isAvaliable) {
+      let msg = `[${util.formatDate()}] [${userId}] [${act}] ` + (params ? JSON.stringify(params) : '');
+      this._actionWriter.write(msg);
+    } else if (this.fl !== null) {
+      this._actionWriter._flCount++;
+      this.fl.action(userId, act, params);
+    } else {
+      console.log(userId, act, params);
+    }
   }
   sdebug(section, ...args) {
     if (LEVELS.DEBUG < this._level || this._state > 0) {
