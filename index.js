@@ -277,11 +277,8 @@ class FileLogger {
 
     return Promise.all(arr);
   }
-  _prefix(ts) {
-    return this._cluster + `[${util.formatDate(ts ? new Date(ts) : undefined)}] `;
-  }
   _format(level, args, ts) {
-    return this._prefix(ts) + (level === LEVELS.ERROR ? util.formatError(args) : util.formatArray(args));
+    return this._cluster + `[${util.formatDate(ts ? new Date(ts) : undefined)}] ` + (level === LEVELS.ERROR ? util.formatError(args) : util.formatArray(args));
   }
   debug(...args) {
     if (LEVELS.DEBUG < this._level || this._state > 0) {
@@ -306,28 +303,6 @@ class FileLogger {
       return;
     }
     this._write(LEVELS.WARN, args);
-  }
-  action(userId, act, params) {
-    if (LEVELS.ACTION < this._level || !userId || !act) {
-      return;
-    }
-    if (this._state !== 0) {
-      if (this.fl !== null) {
-        this.fl.action(userId, act, params);
-      } else {
-        console.log(userId, act, params);
-      }
-      return;
-    }
-    if (this._actionWriter.isAvaliable) {
-      let msg = `[${util.formatDate()}] [${userId}] [${act}] ` + (params ? JSON.stringify(params) : '');
-      this._actionWriter.write(msg);
-    } else if (this.fl !== null) {
-      this._actionWriter._flCount++;
-      this.fl.action(userId, act, params);
-    } else {
-      console.log(userId, act, params);
-    }
   }
   sdebug(section, ...args) {
     if (LEVELS.DEBUG < this._level || this._state > 0) {
@@ -357,6 +332,9 @@ class FileLogger {
     if (LEVELS.ACCESS < this._level || this._state > 0) {
       return;
     }
+    this._access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
+  }
+  _access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url, ts) {
     if (this._state !== 0) {
       if (this.fl !== null) {
         this.fl.access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
@@ -365,18 +343,42 @@ class FileLogger {
       }
       return;
     }
-
     if (this._accessWriter.isAvaliable) {
       let ds = duration < 2000 ? duration + 'ms' : (duration / 1000 | 0) + 's';
       if (userAgent && userAgent.indexOf('"') >= 0) {
         userAgent = userAgent.replace(/\"/g, '\\"')
       }
-      this._accessWriter.write(this._cluster + `[${util.formatDate()}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${ds}] [${bytesRead}] [${bytesWritten}] [${user ? user : '-'}] [${clientIp || '-'}] [${remoteIp || '-'}] "${userAgent || '-'}" ${url}`);
+      this._accessWriter.write(this._cluster + `[${util.formatDate(ts ? new Date(ts) : undefined)}] [${code !== 0 && code < 1000 ? code : 200}] [${method}] [${ds}] [${bytesRead}] [${bytesWritten}] [${user ? user : '-'}] [${clientIp || '-'}] [${remoteIp || '-'}] "${userAgent || '-'}" ${url}`);
     } else if (this.fl !== null) {
       this._accessWriter._flCount++;
       this.fl.access(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
     } else {
       console.log(method, code, duration, bytesRead, bytesWritten, user, clientIp, remoteIp, userAgent, url);
+    }
+  }
+  action(userId, act, params) {
+    if (LEVELS.ACTION < this._level || !userId || !act) {
+      return;
+    }
+    this._action(userId, act, params);
+  }
+  _action(userId, act, params, ts) {
+    if (this._state !== 0) {
+      if (this.fl !== null) {
+        this.fl.action(userId, act, params);
+      } else {
+        console.log(userId, act, params);
+      }
+      return;
+    }
+    if (this._actionWriter.isAvaliable) {
+      let msg = `[${util.formatDate(ts ? new Date(ts) : undefined)}] [${userId}] [${act}] ` + (params ? JSON.stringify(params) : '');
+      this._actionWriter.write(msg);
+    } else if (this.fl !== null) {
+      this._actionWriter._flCount++;
+      this.fl.action(userId, act, params);
+    } else {
+      console.log(userId, act, params);
     }
   }
   _write(level, args, ts) {
